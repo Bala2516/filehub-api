@@ -4,20 +4,54 @@ const csv = require("csv-parser");
 const xlsx = require("xlsx");
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const BitcoinData = require("../models/BitcoinData");
 
 const router = express.Router();
 
-// Ensure uploads folder exists
-const uploadsDir = path.join(__dirname, "..", "uploads");
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir);
+const ALGO = "aes-256-cbc";
+const SECRET_KEY = crypto.randomBytes(32);
+const IV_LENGTH = 16;
+
+function encryptFile(inputPath, outputPath) {
+  return new Promise((resolve, reject) => {
+    const iv = crypto.randomBytes(IV_LENGTH);
+    const cipher = crypto.createCipheriv(ALGO, SECRET_KEY, iv);
+
+    const input = fs.createReadStream(inputPath);
+    const output = fs.createWriteStream(outputPath);
+
+    output.write(iv);
+
+    input.pipe(cipher).pipe(output);
+
+    output.on("finish", () => resolve(true));
+    output.on("error", reject);
+  });
 }
 
-// Multer Storage Config
+function getDynamicUploadPath(username) {
+  const base = path.join(__dirname, "..", "uploads");
+
+  const now = new Date();
+  const dateFolder =
+    now.getFullYear().toString() +
+    String(now.getMonth() + 1).padStart(2, "0") +
+    String(now.getDate()).padStart(2, "0");
+
+  const finalPath = path.join(base, dateFolder, username);
+
+  fs.mkdirSync(finalPath, { recursive: true });
+
+  return finalPath;
+}
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, uploadsDir);
+    const username = req.body.username || "UnknownUser";
+    const uploadPath = getDynamicUploadPath(username);
+
+    cb(null, uploadPath);
   },
   filename: (req, file, cb) => {
     cb(null, Date.now() + "-" + file.originalname);
@@ -45,7 +79,7 @@ function parseCSV(filePath) {
   });
 }
 
-// Parse Topics:  "AI(0.92), Crypto(0.88)"
+// Parse Topics
 function parseTopics(str) {
   if (!str) return [];
   return str
@@ -62,7 +96,7 @@ function parseTopics(str) {
     .filter(Boolean);
 }
 
-// Parse Ticker Sentiment: "BTC(Bullish), ETH(Neutral)"
+// Parse Ticker Sentiment
 function parseTickerSentiment(str) {
   if (!str) return [];
   return str
@@ -86,6 +120,13 @@ router.post("/upload", upload.single("file"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ msg: "No file uploaded" });
 
+    if (req.file.size === 0) {
+      return res.status(400).json({ msg: "Uploaded file is empty" });
+    }
+
+    const filePath = req.file.path;
+    const encryptedPath = filePath + ".enc";
+
     const ext = path.extname(req.file.originalname).toLowerCase();
     let jsonData = [];
 
@@ -98,8 +139,10 @@ router.post("/upload", upload.single("file"), async (req, res) => {
       return res.status(400).json({ msg: "Only CSV or Excel files allowed" });
     }
 
-    if (!jsonData.length)
-      return res.status(400).json({ msg: "No valid data found in the file" });
+    if (!jsonData.length || jsonData.length === 0)
+      return res
+        .status(400)
+        .json({ msg: "File contains no data or is invalid" });
 
     console.log("Parsed Data:", jsonData);
 
@@ -112,13 +155,21 @@ router.post("/upload", upload.single("file"), async (req, res) => {
 
     const savedData = await BitcoinData.insertMany(jsonData);
 
+    // Encrypt file
+    await encryptFile(filePath, encryptedPath);
+
+    // Delete original unencrypted file
+    fs.unlinkSync(filePath);
+
     res.json({
-      message: "File uploaded & data stored successfully",
-      total_records: savedData.length,
-      stored_data: savedData,
+      message: "File uploaded, encrypted & data stored",
+      encrypted_file: path.basename(encryptedPath),
+      folder: req.file.destination,
+      records_saved: savedData.length,
     });
+
   } catch (error) {
-    console.error("UPLOAD ERROR:", error);
+    console.error(error);
     res.status(500).json({
       msg: "Server error while processing file",
       error: error.message,
