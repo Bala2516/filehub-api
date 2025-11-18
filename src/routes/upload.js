@@ -136,6 +136,9 @@ router.post("/upload", upload.array("files", 10), async (req, res) => {
       const filePath = file.path;
       const encryptedPath = filePath + ".enc";
 
+      const uniqueId = Date.now(); 
+      const encryptedName = `${uniqueId}${ext}`;
+
       if (file.size === 0) {
         results.push({
           file: file.originalname,
@@ -146,7 +149,6 @@ router.post("/upload", upload.array("files", 10), async (req, res) => {
       }
 
       if (AUDIO_EXTS.includes(ext) || VIDEO_EXTS.includes(ext)) {
-
         if (file.size > MAX_MEDIA_SIZE) {
           fs.unlinkSync(file.path);
           results.push({
@@ -157,28 +159,28 @@ router.post("/upload", upload.array("files", 10), async (req, res) => {
           continue;
         }
 
+        await encryptFile(filePath, encryptedPath);
+        fs.unlinkSync(filePath);
+
         let savedDoc;
 
         if (AUDIO_EXTS.includes(ext)) {
           savedDoc = await AudioFile.create({
-            filename: file.filename,
+            filename: encryptedName,
             original_name: file.originalname,
-            filepath: filePath,
+            filepath: encryptedPath,
             size: file.size,
             uploaded_by: username,
           });
         } else {
           savedDoc = await VideoFile.create({
-            filename: file.filename,
+            filename: encryptedName,
             original_name: file.originalname,
-            filepath: filePath,
+            filepath: encryptedPath,
             size: file.size,
             uploaded_by: username,
           });
         }
-
-        await encryptFile(filePath, encryptedPath);
-        fs.unlinkSync(filePath);
 
         results.push({
           file: file.originalname,
@@ -222,6 +224,7 @@ router.post("/upload", upload.array("files", 10), async (req, res) => {
         ...row,
         topics: parseTopics(row.topics),
         ticker_sentiment: parseTickerSentiment(row.ticker_sentiment),
+        uploaded_by: username,
       }));
 
       const savedData = await BitcoinData.insertMany(jsonData);
@@ -249,6 +252,120 @@ router.post("/upload", upload.array("files", 10), async (req, res) => {
       msg: "Server error while processing file",
       error: error.message,
     });
+  }
+});
+
+router.get("/data", async (req, res) => {
+  try {
+    // Fetch all from DB
+    const excelCsvData = await BitcoinData.find({});
+    const audioData = await AudioFile.find({});
+    const videoData = await VideoFile.find({});
+
+    const grouped = {};
+
+    function addToGroup(user, item) {
+      if (!grouped[user]) {
+        grouped[user] = {
+          uploaded_by: user,
+          csv_excel: [],
+          audio: [],
+          video: [],
+        };
+      }
+      item && grouped[user][item.type].push(item.data);
+    }
+
+    // Group CSV/Excel Data
+    excelCsvData.forEach((row) => {
+      addToGroup(row.uploaded_by, {
+        type: "csv_excel",
+        data: row,
+      });
+    });
+
+    audioData.forEach((file) => {
+      addToGroup(file.uploaded_by, {
+        type: "audio",
+        data: {
+          _id: file._id,
+          filename: file.filename,
+          size: file.size,
+          uploaded_at: file.uploaded_at,
+        },
+      });
+    });
+
+    videoData.forEach((file) => {
+      addToGroup(file.uploaded_by, {
+        type: "video",
+        data: {
+          _id: file._id,
+          filename: file.filename,
+          size: file.size,
+          uploaded_at: file.uploaded_at,
+        },
+      });
+    });
+
+    res.json({
+      success: true,
+      total_users: Object.keys(grouped).length,
+      data: Object.values(grouped),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: "Server error", error: err.message });
+  }
+});
+
+router.get("/video/:id", async (req, res) => {
+  try {
+    console.log("Streaming video for ID:", req.params.id);
+    const fileRecord = await VideoFile.findById(req.params.id);
+    if (!fileRecord) {
+      return res.status(404).send("Video file not found");
+    }
+
+    const encryptedPath = fileRecord.filepath;
+
+    const encryptedStream = fs.createReadStream(encryptedPath);
+
+    let iv;
+    encryptedStream.once("readable", () => {
+      iv = encryptedStream.read(16);
+      const decipher = crypto.createDecipheriv("aes-256-cbc", SECRET_KEY, iv);
+
+      res.setHeader("Content-Type", "video/mp4");
+      encryptedStream.pipe(decipher).pipe(res);
+    });
+  } catch (err) {
+    console.error("Error streaming video:", err);
+    res.status(500).send("Server error");
+  }
+});
+
+router.get("/audio/:id", async (req, res) => {
+  try {
+    const fileRecord = await AudioFile.findById(req.params.id);
+    if (!fileRecord) {
+      return res.status(404).send("Audio file not found");
+    }
+
+    const encryptedPath = fileRecord.filepath;
+    const encryptedStream = fs.createReadStream(encryptedPath);
+
+    let iv;
+    encryptedStream.once("readable", () => {
+      iv = encryptedStream.read(16);
+      const decipher = crypto.createDecipheriv("aes-256-cbc", SECRET_KEY, iv);
+
+      res.setHeader("Content-Type", "audio/mp3");
+      encryptedStream.pipe(decipher).pipe(res);
+    });
+  } catch (err) {
+    console.error("Error streaming audio:", err);
+    res.status(500).send("Server error");
   }
 });
 

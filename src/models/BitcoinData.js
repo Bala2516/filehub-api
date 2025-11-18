@@ -25,7 +25,8 @@ const BitcoinDataSchema = new mongoose.Schema({
     topics: [TopicSchema],
     overall_sentiment_score: Number,
     overall_sentiment_label: String,
-    ticker_sentiment: [TickerSchema]
+    ticker_sentiment: [TickerSchema],
+    uploaded_by: String,
 });
 
 module.exports = mongoose.model("BitcoinData", BitcoinDataSchema);
