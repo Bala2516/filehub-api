@@ -5,11 +5,15 @@ const xlsx = require("xlsx");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const bodyParser = require("body-parser");
 const BitcoinData = require("../models/BitcoinData");
 const AudioFile = require("../models/AudioFile");
 const VideoFile = require("../models/VideoFile");
 
 const router = express.Router();
+
+router.use(bodyParser.json());
+router.use(bodyParser.urlencoded({ extended: true }));
 
 const ALGO = "aes-256-cbc";
 const SECRET_KEY = Buffer.from(process.env.AES_SECRET_KEY, "hex");
@@ -60,7 +64,7 @@ const storage = multer.diskStorage({
     cb(null, uploadPath);
   },
   filename: (req, file, cb) => {
-    cb(null, Date.now() + "-" + file.originalname);
+    cb(null, Date.now() + path.extname(file.originalname).toLowerCase());
   },
 });
 
@@ -121,7 +125,6 @@ function parseTickerSentiment(str) {
     .filter(Boolean);
 }
 
-// Upload Route
 router.post("/upload", upload.array("files", 10), async (req, res) => {
   try {
     if (!req.files || req.files.length === 0) {
@@ -134,10 +137,10 @@ router.post("/upload", upload.array("files", 10), async (req, res) => {
     for (const file of req.files) {
       const ext = path.extname(file.originalname).toLowerCase();
       const filePath = file.path;
-      const encryptedPath = filePath + ".enc";
 
-      const uniqueId = Date.now(); 
+      const uniqueId = Date.now();
       const encryptedName = `${uniqueId}${ext}`;
+      const encryptedPath = path.join(path.dirname(filePath), encryptedName);
 
       if (file.size === 0) {
         results.push({
@@ -257,7 +260,6 @@ router.post("/upload", upload.array("files", 10), async (req, res) => {
 
 router.get("/data", async (req, res) => {
   try {
-    // Fetch all from DB
     const excelCsvData = await BitcoinData.find({});
     const audioData = await AudioFile.find({});
     const videoData = await VideoFile.find({});
@@ -284,6 +286,7 @@ router.get("/data", async (req, res) => {
       });
     });
 
+    // Group Audio Data
     audioData.forEach((file) => {
       addToGroup(file.uploaded_by, {
         type: "audio",
@@ -296,6 +299,7 @@ router.get("/data", async (req, res) => {
       });
     });
 
+    // Group Video Data
     videoData.forEach((file) => {
       addToGroup(file.uploaded_by, {
         type: "video",
@@ -319,9 +323,69 @@ router.get("/data", async (req, res) => {
   }
 });
 
+router.get("/data/:uploaded_by", async (req, res) => {
+  try {
+    const user = req.params.uploaded_by;
+
+    const excelCsvData = await BitcoinData.find({ uploaded_by: user });
+    const audioData = await AudioFile.find({ uploaded_by: user });
+    const videoData = await VideoFile.find({ uploaded_by: user });
+
+    if (
+      excelCsvData.length === 0 &&
+      audioData.length === 0 &&
+      videoData.length === 0
+    ) {
+      return res.status(404).json({
+        success: false,
+        message: "No data found for this user",
+      });
+    }
+
+    const grouped = {
+      uploaded_by: user,
+      csv_excel: [],
+      audio: [],
+      video: [],
+    };
+
+    excelCsvData.forEach((row) => {
+      grouped.csv_excel.push(row);
+    });
+
+    audioData.forEach((file) => {
+      grouped.audio.push({
+        _id: file._id,
+        filename: file.filename,
+        size: file.size,
+        uploaded_at: file.uploaded_at,
+      });
+    });
+
+    videoData.forEach((file) => {
+      grouped.video.push({
+        _id: file._id,
+        filename: file.filename,
+        size: file.size,
+        uploaded_at: file.uploaded_at,
+      });
+    });
+
+    res.json({
+      success: true,
+      data: grouped,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      msg: "Server error",
+      error: err.message,
+    });
+  }
+});
+
 router.get("/video/:id", async (req, res) => {
   try {
-    console.log("Streaming video for ID:", req.params.id);
     const fileRecord = await VideoFile.findById(req.params.id);
     if (!fileRecord) {
       return res.status(404).send("Video file not found");
@@ -366,6 +430,66 @@ router.get("/audio/:id", async (req, res) => {
   } catch (err) {
     console.error("Error streaming audio:", err);
     res.status(500).send("Server error");
+  }
+});
+
+router.put("/data/:id", async (req, res) => {
+  try {
+    const updated = await BitcoinData.findByIdAndUpdate(
+      req.params.id,
+      { $set: req.body },
+      { new: true }
+    );
+
+    if (!updated) {
+      return res.status(404).json({ msg: "Record not found" });
+    }
+
+    res.json({
+      success: true,
+      message: "Data updated successfully",
+      updated,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: "Server error", error: err.message });
+  }
+});
+
+router.delete("/data/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const models = [
+      { name: "BitcoinData", model: BitcoinData },
+      { name: "AudioFile", model: AudioFile },
+      { name: "VideoFile", model: VideoFile },
+    ];
+
+    for (const { name, model } of models) {
+      const record = await model.findById(id);
+
+      if (!record) continue;
+
+      if (fs.existsSync(record.filepath)) {
+        fs.unlinkSync(record.filepath);
+      }
+
+      await model.findByIdAndDelete(id);
+
+      return res.json({
+        success: true,
+        message: `${name} record deleted successfully`,
+      });
+    }
+
+    return res.status(404).json({ success: false, msg: "Record not found" });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      msg: "Server error",
+      error: error.message,
+    });
   }
 });
 
