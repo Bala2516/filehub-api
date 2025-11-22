@@ -5,19 +5,47 @@
 ![Postman](https://img.shields.io/badge/Postman-FF6C37?style=for-the-badge&logo=postman&logoColor=white)
 
 
-1. Upload API supports multiple file types
-- csv
-- excel
-- video 
-- audio
+## This project is a Secure Multi-File Upload & Processing System built using Node.js + Express, supporting:
 
-2. Files stored in separate MongoDB models
+- Encrypted file storage (AES-256-CBC)
+- Dynamic folder creation based on date + username
+- CSV & Excel parsing and database storage
+- Secure audio/video upload
+- Encrypted media streaming (audio/video)
+- Grouped user-based data retrieval
+- Update and delete operations for stored records
 
-3. Validations added for uploaded files
-- File extension check
-- File size check
- -Prevents empty files
 
-4. Supports multiple file uploads at once
+1. Clone the repository:
 
-5. Dynamic custom upload path
+```sh
+git clone https://github.com/Bala2516/filehub-api.git
+cd file-upload
+```
+
+2. Install dependencies:
+
+```sh
+npm install
+```
+
+3. Set up .env file:
+
+```sh
+AES_SECRET_KEY=your_key
+```
+- Generate key, open command prompt 
+
+```sh
+run this
+node
+```
+
+
+### Running the Server
+
+```sh
+npm start
+```
+
+Server will start on http://localhost:3000
