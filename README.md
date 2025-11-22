@@ -5,7 +5,7 @@
 ![Postman](https://img.shields.io/badge/Postman-FF6C37?style=for-the-badge&logo=postman&logoColor=white)
 
 
-## This project is a Secure Multi-File Upload & Processing System built using Node.js + Express, supporting:
+### This project is a Secure Multi-File Upload & Processing System built using Node.js + Express, supporting:
 
 - Encrypted file storage (AES-256-CBC)
 - Dynamic folder creation based on date + username
@@ -34,13 +34,14 @@ npm install
 ```sh
 AES_SECRET_KEY=your_key
 ```
-- Generate key, open command prompt 
+- Generate key, open command prompt and run this
 
 ```sh
-run this
 node
 ```
-
+```sh
+require("crypto").randomBytes(32).toString("hex")
+```
 
 ### Running the Server
 
